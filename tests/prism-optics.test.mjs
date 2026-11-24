@@ -992,7 +992,13 @@ test('motion choreography: streamInk CSS.highlights, convAura, smoothCaret, scro
   optics.sync();
   assert.equal(m.document.querySelector('[data-testid="agy-home-ripple-canvas"]'), null);
 
-  // convAura 3-state reflection
+  // convAura 3-state reflection & pseudo-element isolation (never dim conversation-view itself)
+  const opticsStyle = m.document.head.querySelector('style[data-agy-optics-style="1"]')?.textContent || '';
+  assert.match(opticsStyle, /\[data-testid="conversation-view"\]\[data-agy-conv-aura\]::after\{[^}]*pointer-events:none/);
+  for (const state of ['waiting', 'error', 'done-bg']) {
+    assert.match(opticsStyle, new RegExp(`\\[data-testid="conversation-view"\\]\\[data-agy-conv-aura="${state}"\\]::after\\{[^}]*animation:agy-aura-settle`));
+    assert.doesNotMatch(opticsStyle, new RegExp(`\\[data-testid="conversation-view"\\]\\[data-agy-conv-aura="${state}"\\]\\{`));
+  }
   optics.sync(undefined, 'waiting');
   assert.equal(convView.getAttribute('data-agy-conv-aura'), 'waiting');
   optics.sync(undefined, { error: 'boom' });
