@@ -89,6 +89,13 @@ test('settings persist, merge safely, and reject unknown options without changin
     store.set({ sidebarProjectLimit: 3 }); assert.equal(store.get().sidebarProjectLimit, 3);
     store.set({ sidebarProjectLimit: -1 }); assert.equal(store.get().sidebarProjectLimit, -1);
     store.set({ sidebarProjectLimit: 0 });
+    assert.equal(store.get().priorityVisibleRows, 4);
+    for (const rows of [3, 4, 5]) {
+      store.set({ priorityVisibleRows: rows });
+      assert.equal(createSettingsStore(directory).get().priorityVisibleRows, rows);
+    }
+    assert.throws(() => store.set({ priorityVisibleRows: 6 }), /设置/);
+    assert.equal(store.get().priorityVisibleRows, 5);
     assert.equal(DEFAULT_SETTINGS.overviewRange, 'weeklyQuota');
     assert.equal(store.get().overviewRange, 'weeklyQuota');
     store.set({ overviewRange: '24h' }); assert.equal(store.get().overviewRange, '24h');

@@ -166,6 +166,7 @@ Every setting applies live in **Powertools -> Settings** and saves automatically
 | Keep Overview open when switching chats | On | Preserves the right Overview panel open state across conversations |
 | Conversations per project | `Default (6)` | Controls visible chats per project in the sidebar (`Default (6)`, `1-10`, or `Show all`) |
 | Taskbar unread badge | On | Shows `(N)` unread count in the window and taskbar title when background chats finish |
+| Visible priority conversations | `4` | Choose 3, 4, or 5 rows. Changes apply immediately; scroll for more. |
 | Sidebar active-sessions bell | On | Places a bell button right of the titlebar Conversation Picker button to jump to the latest running chat and toggle the sidebar `Priority` list |
 
 ### Telemetry & progress
