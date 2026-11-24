@@ -850,3 +850,138 @@ test('Priority view retains finished and read chats like Codex, sorts waiting/un
 
   pt.dispose();
 });
+
+test('composer under-card status strip mounts outside .surface-composer-card after card and renders Git + telemetry cleanly', async () => {
+  const p = page(true);
+  p.context.location.pathname = '/c/conv-under';
+  const renderedByMount = new Map();
+  p.context.React = {
+    Fragment: Symbol('Fragment'),
+    createElement: (type, props, ...children) => ({
+      type,
+      props: { ...(props || {}), children: children.length <= 1 ? children[0] : children },
+      children
+    }),
+    useState: init => [typeof init === 'function' ? init() : init, () => {}],
+    useEffect: () => {},
+    useLayoutEffect: () => {},
+    useRef: v => ({ current: v })
+  };
+  p.context.HC = ({ children }) => children;
+  p.context.IC = ({ children }) => children;
+  p.context.JC = ({ children: _c, ...props }) => ({ type: 'PopoverContent', props, children: [] });
+  p.context.Uy = ({ children, ...props }) => ({ type: 'Button', props, children: Array.isArray(children) ? children : [children] });
+  p.context.__agyNativeAdapter = {
+    wrap: el => el,
+    composerCascadeId: () => 'conv-under',
+    workspaceUri: (_cid, src) => src === card ? 'file:///repo' : ''
+  };
+  p.context.ReactDOM = {
+    createRoot(mount) {
+      return {
+        render(el) { renderedByMount.set(mount, el); },
+        unmount() { renderedByMount.delete(mount); }
+      };
+    }
+  };
+  p.context.getComputedStyle = () => ({ display: 'flex' });
+
+  const makeContainer = () => {
+    const children = [];
+    const syncSiblings = () => {
+      for (let i = 0; i < children.length; i++) children[i].nextSibling = children[i + 1] || null;
+    };
+    return {
+      children,
+      insertBefore(node, before) {
+        const cur = children.indexOf(node);
+        if (cur !== -1) children.splice(cur, 1);
+        const idx = before ? children.indexOf(before) : -1;
+        if (idx === -1) children.push(node);
+        else children.splice(idx, 0, node);
+        node.parentElement = this;
+        node.isConnected = true;
+        syncSiblings();
+      }
+    };
+  };
+
+  const inputBox = makeContainer();
+  const footerRow = makeContainer();
+  const card = { isConnected: true, parentElement: null, nextSibling: null, closest: sel => sel === '.surface-composer-card' ? card : null };
+  inputBox.insertBefore(card, null);
+  const modelTrigger = { isConnected: true, parentElement: null, nextSibling: null, closest: sel => sel === '.surface-composer-card' ? card : null };
+  footerRow.insertBefore(modelTrigger, null);
+
+  p.document.querySelector = sel => sel === '.surface-composer-card' ? card : null;
+  p.document.querySelectorAll = sel => {
+    if (sel === '[data-testid="model-selector-trigger"]') return [modelTrigger];
+    if (sel === '[data-testid="agy-context-ring-trigger"]') return [{}];
+    return [];
+  };
+  p.context.__agyPowertoolsHost = raw => {
+    const req = JSON.parse(raw);
+    if (req.method === 'git.status') {
+      queueMicrotask(() => p.context.__agyPowertoolsReceive(req.id, {
+        isRepo: true, branch: 'feat/composer-under-strip', changedCount: 2, additions: 1604, deletions: 310, files: []
+      }));
+      return;
+    }
+    if (req.method === 'state') {
+      queueMicrotask(() => p.context.__agyPowertoolsReceive(req.id, {
+        conversationId: 'conv-under',
+        goal: { text: 'Ship clean UI', status: 'active' },
+        contextWindow: { usedPercent: 64, usedTokens: 128000, maxTokens: 200000, categories: [] },
+        telemetry: { tps: 29.5, latestTps: 29.5 },
+        turns: [], requests: []
+      }));
+      return;
+    }
+    queueMicrotask(() => p.context.__agyPowertoolsReceive(req.id, {}));
+  };
+  p.context.__agyInitialSettings = { enabled: true, contextRing: true, speedStats: true, gitStatusPill: true, goalBar: true };
+  vm.runInContext(source, p.context);
+  await new Promise(r => setTimeout(r, 40));
+
+  // composer footer row stays untouched; inputBox holds [goal-bar, card, ring(under-strip)]
+  assert.equal(footerRow.children.length, 1);
+  assert.deepEqual(
+    inputBox.children.map(n => n === card ? 'card' : n.dataset?.agyPowertoolsRoot),
+    ['goal-bar', 'card', 'ring']
+  );
+  const ringMount = inputBox.children[2];
+  assert.equal(ringMount.className, 'block w-full');
+
+  // Evaluate rendered NativeEntry tree to verify left Git + right Context/Speed under-strip structure
+  const rootEl = renderedByMount.get(ringMount);
+  const stripTree = rootEl.type(rootEl.props);
+  assert.equal(stripTree.props['data-testid'], 'agy-composer-under-strip');
+  const flatText = [];
+  const testIds = [];
+  const walk = node => {
+    if (node == null || typeof node === 'boolean') return;
+    if (typeof node === 'string' || typeof node === 'number') { flatText.push(String(node)); return; }
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (typeof node.type === 'function') { walk(node.type(node.props || {})); return; }
+    if (node.props?.['data-testid']) testIds.push(node.props['data-testid']);
+    (node.children || []).forEach(walk);
+  };
+  walk(stripTree);
+  assert.ok(testIds.includes('agy-git-status-trigger'));
+  assert.ok(testIds.includes('agy-context-ring-trigger'));
+  assert.ok(testIds.includes('agy-speed-stats-trigger'));
+  const joined = flatText.join(' ');
+  assert.ok(joined.includes('feat/composer-under-strip'));
+  assert.ok(joined.includes('+1604'));
+  assert.ok(joined.includes('-310'));
+  assert.ok(joined.includes('上下文 '));
+  assert.ok(joined.includes('64%'));
+  assert.ok(joined.includes('29.5 tok/s'));
+  assert.equal(joined.includes('\u00b7'), false);
+
+  // Empty state (no telemetry, no git repo) returns null so no empty padding bar renders
+  const emptyResult = rootEl.type({ data: null, conversationId: '', source: {} });
+  assert.equal(emptyResult, null);
+
+  p.context.__agyPowertools.dispose();
+});
