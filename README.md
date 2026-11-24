@@ -8,7 +8,7 @@
     <a href="https://github.com/WhiteBr1ck/agy-powertools/releases"><img src="https://img.shields.io/github/v/release/WhiteBr1ck/agy-powertools?label=Release&color=2563eb" height="20" alt="Release" /></a>
     <a href="https://github.com/WhiteBr1ck/agy-powertools/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/WhiteBr1ck/agy-powertools/ci.yml?label=CI" height="20" alt="CI" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/WhiteBr1ck/agy-powertools?label=License&color=16a34a" height="20" alt="MIT License" /></a>
-    <img src="https://img.shields.io/badge/Antigravity-2.34.0-0f172a" height="20" alt="Antigravity 2.34.0" />
+    <img src="https://img.shields.io/badge/Antigravity-2.35.0-0f172a" height="20" alt="Antigravity 2.35.0" />
     <img src="https://img.shields.io/badge/Node.js-%3E%3D22.13-339933" height="20" alt="Node.js >= 22.13" />
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20WSL2-475569" height="20" alt="Platform" />
   </p>
@@ -214,6 +214,10 @@ sh ./install.sh
 ---
 
 ## 更新日志
+
+### v2.14.3
+- **适配 Antigravity 2.35.0**：更新原生弹出层内容组件（`JC`）绑定特征以兼容 2.35.0（同时保持向后兼容 2.34.0），恢复所有原生面板与浮窗挂载。
+- **补全 2.35.0 界面汉化**：同步适配 2.35.0 中改为句首大写的设置项标题、新增说明文案及 `Load older messages`、`Delete Permanently`、`Return to Inbox` 等菜单项。
 
 ### v2.14.2
 - **修复多账号「添加账号」热登录后未重启导致约 50 分钟回退旧账号并污染凭据槽的问题（#22、#23，感谢 `@Hi-Jiajun` 的根因排查与 PR）**：

@@ -1,7 +1,7 @@
 {
   "name": "agy-powertools",
   "displayName": "Agy Powertools",
-  "version": "2.14.2",
+  "version": "2.14.3",
   "description": "Native UI enhancements, Codex-style stage updates and compact layout, session branching, context telemetry, and usage dashboard for Antigravity 2.0.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

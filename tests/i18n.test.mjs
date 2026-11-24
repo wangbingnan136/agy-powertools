@@ -149,6 +149,10 @@ test('Swarm UI strings translate cleanly in zh-CN and zh-TW without middle dots 
   const readSummary = t(`read #12 \u00b7 updated 2m ago`, 'zh-CN');
   assert.equal(readSummary, '已读至 #12 更新于 2m ago');
   assert.equal(readSummary.includes('\u00b7'), false);
+  assert.equal(t('Load older messages', 'zh-CN'), '加载更早的消息');
+  assert.equal(t('Prevent sleep', 'zh-CN'), '防止休眠');
+  assert.equal(t('Context and quota indicator', 'zh-TW'), '上下文與額度指示器');
+  assert.equal(t('Delete Permanently', 'zh-TW'), '永久刪除');
   const i18nSrc = readFileSync('lib/native-i18n.js', 'utf8');
   assert.ok(i18nSrc.includes('.post-body') && i18nSrc.includes('#ov-frame'));
 });

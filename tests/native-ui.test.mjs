@@ -378,14 +378,14 @@ test('cold-start proxy prompt banner appears on mismatch, handles unreachable po
 
 test('native-bindings resolves 2.34.0 notification hook without type:"add" and stays optional when absent', () => {
   const bindingsSource = readFileSync(new URL('../lib/native-bindings.js', import.meta.url), 'utf8');
-  const makeEnv = (toastHook, extra = {}) => {
+  const makeEnv = (toastHook, jcImpl = null, extra = {}) => {
     const Sy = () => null; Sy.displayName = 'CompactTooltipBaseUi';
     const ctx = vm.createContext({
       React: {},
       createFileRoute: () => opts => opts,
       HC: () => ({ defaultOpen: 1, matchTriggerWidth: 1, disableMobileSheet: 1 }),
       IC: () => ({ startDragTracking: 1, tag: 'popover-trigger-element', asChild: 1 }),
-      JC: () => ({ scrollContainerClassName: 1, arrowNavigable: 1, matchTriggerWidth: 1 }),
+      JC: jcImpl || (() => ({ scrollContainerClassName: 1, arrowNavigable: 1, matchTriggerWidth: 1 })),
       KC: () => ({ asChild: 1, isMobile: 1, setIsOpen: 1 }),
       GC: () => ({ tooltipPlace: 1, secondaryAction: 1, tag: 'main-row-trigger' }),
       Uy: () => ({ paddingClassName: 1, computedAriaLabel: 1, asChild: 1 }),
@@ -428,8 +428,14 @@ test('native-bindings resolves 2.34.0 notification hook without type:"add" and s
   const resolvedNoToast = makeEnv(null);
   assert.equal(resolvedNoToast.bindings.um, undefined);
 
+  // 2.35.0 style JC (scrollContainerClassName removed, keeps arrowNavigable + matchTriggerWidth + collisionAvoidance / contentRef.current=)
+  const jc235 = function LQ({ arrowNavigable: l, matchTriggerWidth: k, collisionAvoidance: n }) { const y = { contentRef: {} }; y.contentRef.current = l || k || n; return y; };
+  const resolved235 = makeEnv(toast234, jc235);
+  assert.equal(resolved235.names.JC, 'JC');
+  assert.equal(resolved235.bindings.JC, jc235);
+
   // Native slash menu hooks (aIb, BT with .queryMatches=, Cy, IUa) resolve structurally
-  const slashEnv = makeEnv(toast234, {
+  const slashEnv = makeEnv(toast234, null, {
     aIb: items => items.map(x => ({ scopeItem: x, icon: 'chat_add_on', err: 'Unknown SlashCommandItem type:' })),
     BT: (a, h, k) => { const g = {}; g.queryMatches = { label: h.labelMatch, description: h.descriptionMatch }; return { item: g, score: Math.max(h.score, k.score >> 2) }; },
     Cy: () => ({}),
