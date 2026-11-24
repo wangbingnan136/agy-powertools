@@ -37,6 +37,9 @@ test('settings persist, merge safely, and reject unknown options without changin
     assert.equal(store.get().goalBar, true);
     store.set({ goalBar: false }); assert.equal(store.get().goalBar, false);
     store.set({ goalBar: true }); assert.equal(store.get().goalBar, true);
+    assert.equal(store.get().sideChatCommand, true);
+    store.set({ sideChatCommand: false }); assert.equal(store.get().sideChatCommand, false);
+    store.set({ sideChatCommand: true }); assert.equal(store.get().sideChatCommand, true);
     assert.equal(store.get().fileContextMenu, true);
     assert.equal(store.get().externalEditor, 'auto');
     store.set({ externalEditor: 'cursor' }); assert.equal(store.get().externalEditor, 'cursor');

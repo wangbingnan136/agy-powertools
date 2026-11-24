@@ -378,7 +378,7 @@ test('cold-start proxy prompt banner appears on mismatch, handles unreachable po
 
 test('native-bindings resolves 2.34.0 notification hook without type:"add" and stays optional when absent', () => {
   const bindingsSource = readFileSync(new URL('../lib/native-bindings.js', import.meta.url), 'utf8');
-  const makeEnv = toastHook => {
+  const makeEnv = (toastHook, extra = {}) => {
     const Sy = () => null; Sy.displayName = 'CompactTooltipBaseUi';
     const ctx = vm.createContext({
       React: {},
@@ -409,7 +409,8 @@ test('native-bindings resolves 2.34.0 notification hook without type:"add" and s
       Wb: x => { const o = Object.create(null); o.$typeName=x.members+'oneof'; return o; },
       IJ: s => { const x = {}; x._dirtyElements=1; x._dirtyLeaves=1; x._parsed=!0; return JSON.parse(s); },
       LN: s => JSON.stringify({ version:1, singleParagraph: s, type:"root" }),
-      ...(toastHook ? { kn: toastHook } : {})
+      ...(toastHook ? { kn: toastHook } : {}),
+      ...extra
     });
     // Ensure resolveFn contains exact matcher literal checkpointConfig=void 0
     vm.runInContext(`resolveFn = function(checkpointConfig=void 0){ const x=Kc(Proto.CascadeConfigSchema, checkpointConfig); return { lookupCustomModelInfo: x, customModelInfoOverride: 1 }; };`, ctx);
@@ -426,6 +427,19 @@ test('native-bindings resolves 2.34.0 notification hook without type:"add" and s
   // Absent toast hook degrades gracefully without throwing
   const resolvedNoToast = makeEnv(null);
   assert.equal(resolvedNoToast.bindings.um, undefined);
+
+  // Native slash menu hooks (aIb, BT with .queryMatches=, Cy, IUa) resolve structurally
+  const slashEnv = makeEnv(toast234, {
+    aIb: items => items.map(x => ({ scopeItem: x, icon: 'chat_add_on', err: 'Unknown SlashCommandItem type:' })),
+    BT: (a, h, k) => { const g = {}; g.queryMatches = { label: h.labelMatch, description: h.descriptionMatch }; return { item: g, score: Math.max(h.score, k.score >> 2) }; },
+    Cy: () => ({}),
+    IUa: () => {},
+    FHb: (q, u) => { const v = Cy("/", u, { mentionText: u }); q && (q.replace(v), IUa(v)); console.error("Failed to fetch MCP prompt:"); }
+  });
+  assert.equal(slashEnv.bindings.names.slashOptions, 'aIb');
+  assert.equal(slashEnv.bindings.names.slashFilter, 'BT');
+  assert.equal(slashEnv.bindings.names.slashMention, 'Cy');
+  assert.equal(slashEnv.bindings.names.slashAfterInsert, 'IUa');
 });
 
 test('overview mounts both progress and overviewQuota in stable order without insertBefore ping-pong', async () => {
@@ -722,4 +736,98 @@ test('sidebar bell switches to most recent running session, toggles Priority vie
   assert.deepEqual(JSON.parse(JSON.stringify(jumpedTurn)), { stepIndexStart: 14 });
 
   p.context.__agyPowertools.dispose();
+});
+
+test('side chat slash command matches /侧 only (not backslash), defers to native listbox when open, and submits inline /侧边聊天 questions', async () => {
+  const renderedTrees = new Map();
+  let openedArgs = null;
+  let composerText = '';
+  let listboxOpen = false;
+  const p = page(true);
+  p.context.ReactDOM = {
+    createRoot: mount => ({
+      render(el) { renderedTrees.set(mount.dataset?.agyPowertoolsRoot || 'anon', el); },
+      unmount() { renderedTrees.delete(mount.dataset?.agyPowertoolsRoot || 'anon'); }
+    })
+  };
+  p.context.location.pathname = '/c/conv-side-1';
+  const cardParent = { insertBefore(child) { child.isConnected = true; } };
+  const modelBtn = {
+    isConnected: true,
+    parentElement: { style: { display: 'flex' }, insertBefore(child) { child.isConnected = true; } },
+    nextSibling: null,
+    closest: sel => sel === '.surface-composer-card' ? composerCard : null
+  };
+  const composerCard = {
+    isConnected: true,
+    parentElement: cardParent,
+    contains: el => el === composerCard || el === inputTarget,
+    closest: sel => sel === '.surface-composer-card' ? composerCard : null,
+    querySelector: sel => sel === '[data-testid="model-selector-trigger"]' ? modelBtn : null
+  };
+  const inputTarget = {
+    closest: sel => sel === '.surface-composer-card' ? composerCard : null
+  };
+  p.document.activeElement = inputTarget;
+  p.document.querySelector = sel => sel === '[role="listbox"]' && listboxOpen ? {} : null;
+  p.document.querySelectorAll = sel => sel === '[data-testid="model-selector-trigger"]' ? [modelBtn] : [];
+  p.context.getComputedStyle = () => ({ display: 'flex' });
+  p.context.__agyNativeAdapter = {
+    wrap: el => el,
+    installPage: () => true,
+    onEditChange: () => () => {},
+    onGoalDetected: () => () => {},
+    setSideChatCommand() {},
+    composerCascadeId: () => 'conv-side-1',
+    isNestedComposer: () => false,
+    getComposerText: () => composerText,
+    openSideChat: (cid, opts) => { openedArgs = { cid, ...opts }; composerText = ''; return { ok: true }; }
+  };
+  p.context.__agyInitialSettings = { enabled: true, sideChatCommand: true };
+  vm.runInContext(source, p.context);
+  const pt = p.context.__agyPowertools;
+
+  // Only `/` matches; `\` is completely ignored
+  assert.equal(pt.matchSideChat('/侧').cmd, '侧');
+  assert.equal(pt.matchSideChat('/侧边').cmd, '侧边');
+  assert.equal(pt.matchSideChat('/侧边聊天').cmd, '侧边聊天');
+  assert.equal(pt.matchSideChat('/side').cmd, 'side');
+  assert.equal(pt.matchSideChat('/侧边聊天 帮我看下日志').question, '帮我看下日志');
+  assert.equal(pt.matchSideChat('\\侧'), null);
+  assert.equal(pt.matchSideChat('\\侧边聊天'), null);
+  assert.equal(pt.matchSideChat('\\'), null);
+  assert.equal(pt.matchSideChat('/'), null);
+  assert.equal(pt.matchSideChat('/s'), null);
+  assert.equal(pt.matchSideChat('/plan build ui'), null);
+  assert.equal(pt.matchSideChat('//comment'), null);
+
+  // When native `/` listbox is open on `/侧边`, defer Enter to native listbox
+  composerText = '/侧边';
+  listboxOpen = true;
+  let stopped = false;
+  for (const fn of (p.callbacks.get('keydown') || [])) {
+    fn({ key: 'Enter', isComposing: false, shiftKey: false, altKey: false, target: inputTarget, preventDefault() { stopped = true; }, stopPropagation() {}, stopImmediatePropagation() {} });
+  }
+  assert.equal(stopped, false);
+  assert.equal(openedArgs, null);
+
+  // IME composing Enter does NOT prematurely fire openSideChat
+  composerText = '/侧边聊天 帮我看下日志';
+  listboxOpen = false;
+  for (const fn of (p.callbacks.get('keydown') || [])) {
+    fn({ key: 'Enter', isComposing: true, keyCode: 229, target: inputTarget, preventDefault() { stopped = true; }, stopPropagation() {} });
+  }
+  assert.equal(stopped, false);
+  assert.equal(openedArgs, null);
+
+  // Committed Enter on `/侧边聊天 帮我看下日志` opens side chat and submits question
+  for (const fn of (p.callbacks.get('keydown') || [])) {
+    fn({ key: 'Enter', isComposing: false, shiftKey: false, altKey: false, target: inputTarget, preventDefault() { stopped = true; }, stopPropagation() {}, stopImmediatePropagation() {} });
+  }
+  assert.equal(stopped, true);
+  assert.equal(openedArgs?.cid, 'conv-side-1');
+  assert.equal(openedArgs?.question, '帮我看下日志');
+  assert.equal(openedArgs?.submit, true);
+
+  pt.dispose();
 });
