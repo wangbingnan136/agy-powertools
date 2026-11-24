@@ -753,23 +753,11 @@ test('conversationDirectory and workspaceUri classify running, unread, projects,
   assert.equal(dir.projects.length, 2);
 });
 
-test('openSideChat clears main composer, opens right-hand Side Question tab, hooks native slash menu, and ignores main isNested wrapper', async () => {
-  const dispatched = [];
-  let mainState = null, sideState = null, sideFocused = false, sideSubmitted = false, removedMention = false;
-  const mainRoot = { textContent: '/侧边聊天' };
-  const sideRoot = { textContent: '', focus() { sideFocused = true; } };
+test('composer text helpers read/write plain Lexical state and distinguish nested side composers', () => {
+  let mainState = null;
+  const mainRoot = { textContent: 'hello draft' };
   const mainEditor = { _rootElement: mainRoot, setEditorState: st => { mainState = st; mainRoot.textContent = st.text; }, focus() {} };
-  const sideEditor = { _rootElement: sideRoot, setEditorState: st => { sideState = st; sideRoot.textContent = st.text; }, focus() { sideFocused = true; } };
   const mainBox = { lexicalRef: { current: mainEditor } };
-  const sideBox = { lexicalRef: { current: sideEditor }, submit() { sideSubmitted = true; } };
-  const reduxStore = {
-    getState: () => ({
-      trajectorySummaries: { summaries: { 'conv-live': { stepCount: 4 }, 'conv-empty': { stepCount: 0 } } },
-      sidePanelV2: { conversationPanes: {} }
-    }),
-    dispatch: action => dispatched.push(action)
-  };
-  // Regression guard: main composer lies outside conversation-view AND has an inner provider with isNested: true
   const mainCard = {
     contains: el => el === mainCard,
     closest: sel => sel === '.surface-composer-card' ? mainCard : null,
@@ -781,94 +769,39 @@ test('openSideChat clears main composer, opens right-hand Side Question tab, hoo
         tag: 10, type: {}, memoizedProps: { value: { isNested: true, isSubagent: false } },
         return: {
           tag: 10, type: {}, memoizedProps: { value: { isNested: false, inputBoxRef: { current: mainBox }, getLexicalEditor: () => mainEditor } },
-          return: { tag: 10, type: {}, memoizedProps: { value: { store: reduxStore } }, return: null }
+          return: null
         }
       }
     }
   };
   const sideCard = {
-    offsetParent: {},
     contains: el => el === sideCard,
     closest: () => null,
-    querySelector: () => sideRoot,
+    querySelector: () => null,
     '__reactFiber$side': {
       tag: 0,
       memoizedProps: {},
       return: {
-        tag: 10, type: {}, memoizedProps: { value: { draftSideQuestionParentId: 'conv-live', isNested: true, inputBoxRef: { current: sideBox }, getLexicalEditor: () => sideEditor } },
+        tag: 10, type: {}, memoizedProps: { value: { draftSideQuestionParentId: 'conv-live', isNested: true } },
         return: null
       }
     }
   };
   const context = vm.createContext({
-    __agyNativeBindings: {
-      names: { slashOptions: 'aIb', slashFilter: 'BT', slashMention: 'Cy', slashAfterInsert: 'IUa' }
-    },
-    aIb: specs => specs.map(sp => ({
-      customLabel: sp.name,
-      customDescription: sp.description,
-      item: { scopeItem: { case: 'recipe', value: { recipeId: sp.path, title: sp.name, description: sp.description } } }
-    })),
-    BT: (opts, q) => opts.filter(o => !q || o.customLabel?.includes(q) || o.customDescription?.toLowerCase().includes(q.toLowerCase())),
-    Cy: (trigger, text, payload) => ({ trigger, text, payload, remove() { removedMention = true; } }),
-    IUa: () => {},
-    document: {
-      activeElement: mainCard,
-      querySelector: sel => sel?.includes('user-input-step') ? null : mainCard,
-      querySelectorAll: () => [mainCard, sideCard]
-    },
+    document: { querySelector: () => mainCard, querySelectorAll: () => [mainCard, sideCard] },
     IJ: (_, rawJson) => {
       const parsed = JSON.parse(rawJson);
-      const txt = parsed?.root?.children?.[0]?.children?.[0]?.text || '';
-      return { text: txt };
-    },
-    setTimeout
+      return { text: parsed?.root?.children?.[0]?.children?.[0]?.text || '' };
+    }
   });
   vm.runInContext(readFileSync(new URL('../lib/native-client.js', import.meta.url), 'utf8'), context);
   const adapter = context.__agyNativeAdapter;
 
-  assert.equal(adapter.getComposerText(mainCard), '/侧边聊天');
+  assert.equal(adapter.getComposerText(mainCard), 'hello draft');
   assert.equal(adapter.isNestedComposer(mainCard), false);
   assert.equal(adapter.isNestedComposer(sideCard), true);
-
-  // Native `/` slash menu filter injects 侧边聊天 when native btw is present, and NOT into @ file menus
-  const btwOpt = { customLabel: 'btw', customDescription: 'Ask a quick question', item: { scopeItem: { case: 'recipe', value: { recipeId: 'btw' } } } };
-  const matchedSlash = context.BT([btwOpt], '侧', {}, false);
-  assert.equal(matchedSlash.length, 1);
-  assert.equal(matchedSlash[0].customLabel, '侧边聊天');
-
-  const fileOpt = { customLabel: 'index.ts', customDescription: '', item: { scopeItem: { case: 'file', value: { absoluteUri: 'file:///a' } } } };
-  assert.equal(context.BT([fileOpt], '', {}, false).length, 1);
-
-  // Selecting 侧边聊天 in native `/` menu removes only the /侧... mention node and opens Side Chat without wiping prior main text
-  mainRoot.textContent = '先保留这段草稿 ';
-  const mentionNode = context.Cy('/', '侧边聊天', { data: '{"recipe":{"recipeId":"__agy_side_chat__"}}' });
-  context.IUa(mentionNode);
-  assert.equal(removedMention, true);
-  await new Promise(r => setTimeout(r, 20));
-  assert.equal(mainRoot.textContent, '先保留这段草稿 ');
-  assert.equal(sideFocused, true);
-  assert.deepEqual(
-    dispatched.map(a => a.type),
-    [
-      'inputDrafts/clearInputDraft',
-      'modelSelection/conversationCleared',
-      'sidePanelV2/setContent',
-      'sidePanelV2/setActiveTab',
-      'sidePanel/setSidePanelOpen'
-    ]
-  );
-
-  // Rejects empty unsent conversation
-  const emptyRes = adapter.openSideChat('conv-empty', { sourceEl: mainCard });
-  assert.equal(emptyRes.ok, false);
-  assert.equal(emptyRes.reason, 'empty_conversation');
-
-  // Inline question prefills and submits in side composer
-  const qRes = adapter.openSideChat('conv-live', { sourceEl: mainCard, question: '这个函数在哪定义的？', submit: true });
-  assert.equal(qRes.ok, true);
-  assert.equal(mainState.text, '');
-  assert.equal(sideState.text, '这个函数在哪定义的？');
-  await new Promise(r => setTimeout(r, 40));
-  assert.equal(sideSubmitted, true);
+  assert.equal(adapter.setComposerText(mainCard, '/btw check logs'), true);
+  assert.equal(mainState.text, '/btw check logs');
+  assert.equal(adapter.openSideChat, undefined);
+  assert.equal(adapter.setSideChatCommand, undefined);
 });

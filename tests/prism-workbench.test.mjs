@@ -611,6 +611,235 @@ test('Effort Slider mounts star ticks, auto-yields to .ces-slider, renders Orche
   wb.dispose();
 });
 
+test('Effort Slider reads real Antigravity React Fiber context without DOM effort buttons, commits cleanly, switches Claude/Codex themes, and clears ready gate on close', () => {
+  const dom = createMockDom();
+  const { document, localStorage } = dom;
+
+  const modelOptions = [
+    { label: 'Gemini 4 Neon (Low)', modelId: 'gemini-4-neon-low' },
+    { label: 'Gemini 4 Neon (Medium)', modelId: 'gemini-4-neon-medium' },
+    { label: 'Gemini 4 Neon (High)', modelId: 'gemini-4-neon-high' },
+    { label: 'Gemini 4 Neon (Extra High)', modelId: 'gemini-4-neon-xhigh' },
+    { label: 'Claude Opus 5.5 (Low)', modelId: 'claude-opus-5-5-low' },
+    { label: 'Claude Opus 5.5 (Medium)', modelId: 'claude-opus-5-5-medium' },
+    { label: 'Claude Opus 5.5 (High)', modelId: 'claude-opus-5-5-high' },
+    { label: 'GPT-OSS 120B (Medium)', modelId: 'gpt-oss-120b' }
+  ];
+  const effortIndex = new Map([
+    ['gemini-4-neon', new Map([
+      ['low', modelOptions[0]],
+      ['medium', modelOptions[1]],
+      ['high', modelOptions[2]],
+      ['xhigh', modelOptions[3]]
+    ])],
+    ['claude-opus-5-5', new Map([
+      ['low', modelOptions[4]],
+      ['medium', modelOptions[5]],
+      ['high', modelOptions[6]]
+    ])]
+  ]);
+
+  let selectedModel = modelOptions[2]; // Gemini 4 Neon (High)
+  const commitCalls = [];
+  const fiberRoot = {
+    memoizedProps: {
+      value: {
+        setModelConfigByLabelForConversation(label, conversationId, keepOpen) {
+          commitCalls.push({ label, conversationId, keepOpen });
+          selectedModel = modelOptions.find(o => o.label === label) || selectedModel;
+          providerNode.memoizedProps.value.selectedModel = selectedModel;
+        }
+      }
+    },
+    return: null
+  };
+  const convNode = {
+    memoizedProps: { conversationId: 'conv-fiber-1', placement: 'composer' },
+    return: fiberRoot
+  };
+  const providerNode = {
+    memoizedProps: {
+      value: { effortIndex, modelOptions, selectedModel }
+    },
+    return: convNode
+  };
+
+  // Real Antigravity DOM: panel has model rows with model-selector-effort-group and NO effort-option buttons in DOM
+  const panel = document.createElement('div');
+  panel.setAttribute('data-testid', 'model-selector-panel');
+  panel['__reactFiber$test'] = { memoizedProps: {}, return: providerNode };
+
+  const listWrapper = document.createElement('div');
+  const makeModelRow = (baseName, effText) => {
+    const row = document.createElement('div');
+    row.setAttribute('role', 'menuitem');
+    const grp = document.createElement('span');
+    grp.setAttribute('data-testid', 'model-selector-effort-group');
+    grp.setAttribute('data-model-base', baseName);
+    grp.textContent = baseName;
+    const effSpan = document.createElement('span');
+    effSpan.textContent = effText;
+    row.appendChild(grp);
+    row.appendChild(effSpan);
+    return { row, effSpan };
+  };
+
+  const neonRow = makeModelRow('Gemini 4 Neon', 'High');
+  const claudeRow = makeModelRow('Claude Opus 5.5', 'Medium');
+  listWrapper.appendChild(neonRow.row);
+  listWrapper.appendChild(claudeRow.row);
+
+  const usageFooter = document.createElement('div');
+  usageFooter.textContent = '查看用量';
+  panel.appendChild(listWrapper);
+  panel.appendChild(usageFooter);
+  document.body.appendChild(panel);
+
+  const wb = dom.createWorkbench({ options: () => ({ enabled: true, effortSlider: true, effortMemory: true }) });
+
+  const slider = panel.querySelector('[data-testid="agy-effort-slider"]');
+  assert.ok(slider, 'Fiber-backed effort slider should mount even when no DOM effort-option buttons exist');
+  assert.equal(document.documentElement.getAttribute('data-agy-effort-slider-ready'), '1');
+  assert.equal(slider.getAttribute('data-brand'), 'codex');
+  assert.equal(slider.querySelectorAll('.agy-effort-tick').length, 4);
+  // Placed right after listWrapper (before usageFooter)
+  assert.equal(panel.children[panel.children.length - 1], usageFooter);
+
+  // Click Extra High -> commits via Fiber with keepOpen=true, enables max glow, updates row & memory
+  slider.querySelector('[data-testid="agy-effort-tick-xhigh"]').click();
+  assert.equal(commitCalls.length, 1);
+  assert.deepEqual(commitCalls[0], {
+    label: 'Gemini 4 Neon (Extra High)',
+    conversationId: 'conv-fiber-1',
+    keepOpen: true
+  });
+  assert.equal(slider.getAttribute('data-max'), 'true');
+  assert.equal(neonRow.effSpan.textContent, 'Extra High');
+  assert.equal(JSON.parse(localStorage.getItem('agy.effortMemory.v1'))['gemini 4 neon'], 'xhigh');
+
+  // Click Claude row -> commits directly with keepOpen=true and switches slider theme to claude
+  claudeRow.row.click();
+  assert.equal(commitCalls.length, 2);
+  assert.equal(commitCalls[1].label, 'Claude Opus 5.5 (Medium)');
+  assert.equal(commitCalls[1].keepOpen, true);
+  const claudeSlider = panel.querySelector('[data-testid="agy-effort-slider"]');
+  assert.equal(claudeSlider.getAttribute('data-brand'), 'claude');
+  assert.equal(claudeSlider.querySelectorAll('.agy-effort-tick').length, 3);
+
+  // Click Neon row again -> restores remembered Extra High!
+  neonRow.row.click();
+  assert.equal(commitCalls[commitCalls.length - 1].label, 'Gemini 4 Neon (Extra High)');
+
+  // Closing the panel clears data-agy-effort-slider-ready immediately
+  panel.remove();
+  wb.sync();
+  assert.equal(document.documentElement.hasAttribute('data-agy-effort-slider-ready'), false);
+
+  wb.dispose();
+});
+
+test('Effort Slider never mounts inside non-model popovers (New Project/SSH, Overview, Session Stats, or generic Settings dialogs) even when sharing global React Fiber or Low/Medium/High buttons', () => {
+  const dom = createMockDom();
+  const { document } = dom;
+
+  const visibleModelConfigs = [
+    { label: 'Gemini 4 Carbon (Low)', modelId: 'gemini-4-carbon-low' },
+    { label: 'Gemini 4 Carbon (Medium)', modelId: 'gemini-4-carbon-medium' },
+    { label: 'Gemini 4 Carbon (High)', modelId: 'gemini-4-carbon-high' },
+    { label: 'Gemini 4 Carbon (Extra High)', modelId: 'gemini-4-carbon-xhigh' }
+  ];
+  const globalFiberRoot = {
+    memoizedProps: {
+      value: {
+        visibleModelConfigs,
+        currentModelConfig: visibleModelConfigs[3],
+        setModelConfigByLabelForConversation() {}
+      }
+    },
+    return: null
+  };
+
+  // Live composer model trigger exists on page
+  const composerTrigger = document.createElement('button');
+  composerTrigger.setAttribute('data-testid', 'model-selector-trigger');
+  composerTrigger.setAttribute('aria-expanded', 'false');
+  composerTrigger.textContent = 'Gemini 4 Carbon (Extra High)';
+  composerTrigger['__reactFiber$test'] = { memoizedProps: {}, return: globalFiberRoot };
+  document.body.appendChild(composerTrigger);
+
+  // 1. Sidebar "New Project / SSH Host..." popover ([role="dialog"])
+  const newProjectPopover = document.createElement('div');
+  newProjectPopover.setAttribute('role', 'dialog');
+  newProjectPopover['__reactFiber$test'] = { memoizedProps: {}, return: globalFiberRoot };
+  const btnNewProj = document.createElement('button');
+  btnNewProj.textContent = '新建项目';
+  const btnSshHost = document.createElement('button');
+  btnSshHost.textContent = 'SSH Host...';
+  newProjectPopover.appendChild(btnNewProj);
+  newProjectPopover.appendChild(btnSshHost);
+  document.body.appendChild(newProjectPopover);
+
+  // 2. Top-right Overview floating popover ([role="dialog"])
+  const overviewPopover = document.createElement('div');
+  overviewPopover.setAttribute('role', 'dialog');
+  overviewPopover['__reactFiber$test'] = { memoizedProps: {}, return: globalFiberRoot };
+  const ovSection = document.createElement('div');
+  ovSection.textContent = '当前额度 Gemini 98%';
+  overviewPopover.appendChild(ovSection);
+  document.body.appendChild(overviewPopover);
+
+  // 3. Portaled Powertools Session Stats popover ([data-testid="agy-stats-popup"][role="dialog"])
+  const statsPopover = document.createElement('div');
+  statsPopover.setAttribute('role', 'dialog');
+  statsPopover.setAttribute('data-testid', 'agy-stats-popup');
+  statsPopover['__reactFiber$test'] = { memoizedProps: {}, return: globalFiberRoot };
+  const statsRow = document.createElement('div');
+  statsRow.textContent = '首 Token 延迟 8秒';
+  statsPopover.appendChild(statsRow);
+  document.body.appendChild(statsPopover);
+
+  // 4. Generic Settings dialog with Low / Medium / High buttons (unrelated to model selector)
+  const genericSettingsDialog = document.createElement('div');
+  genericSettingsDialog.setAttribute('role', 'dialog');
+  for (const label of ['低', '中', '高']) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    genericSettingsDialog.appendChild(b);
+  }
+  document.body.appendChild(genericSettingsDialog);
+
+  const wb = dom.createWorkbench({ options: () => ({ enabled: true, effortSlider: true, effortMemory: true }) });
+
+  assert.equal(newProjectPopover.querySelector('[data-agy-effort-slider="1"]'), null, 'Must NOT mount inside New Project / SSH Host popover');
+  assert.equal(overviewPopover.querySelector('[data-agy-effort-slider="1"]'), null, 'Must NOT mount inside Overview popover');
+  assert.equal(statsPopover.querySelector('[data-agy-effort-slider="1"]'), null, 'Must NOT mount inside Session Stats popover');
+  assert.equal(genericSettingsDialog.querySelector('[data-agy-effort-slider="1"]'), null, 'Must NOT mount inside generic Settings dialog with Low/Medium/High buttons');
+  assert.equal(document.documentElement.hasAttribute('data-agy-effort-slider-ready'), false, 'Ready gate must stay off when model menu is closed');
+
+  // 5. Now open a real Model Selector popover ([role="dialog"] containing model-selector-effort-group rows) -> MUST mount!
+  composerTrigger.setAttribute('aria-expanded', 'true');
+  const realModelDialog = document.createElement('div');
+  realModelDialog.setAttribute('role', 'dialog');
+  realModelDialog['__reactFiber$test'] = { memoizedProps: {}, return: globalFiberRoot };
+  const listWrap = document.createElement('div');
+  const row = document.createElement('div');
+  row.setAttribute('role', 'menuitem');
+  const grp = document.createElement('span');
+  grp.setAttribute('data-testid', 'model-selector-effort-group');
+  grp.setAttribute('data-model-base', 'Gemini 4 Carbon');
+  grp.textContent = 'Gemini 4 Carbon';
+  row.appendChild(grp);
+  listWrap.appendChild(row);
+  realModelDialog.appendChild(listWrap);
+  document.body.appendChild(realModelDialog);
+
+  wb.sync();
+  assert.ok(realModelDialog.querySelector('[data-testid="agy-effort-slider"]'), 'MUST mount inside real model selector dialog');
+  assert.equal(newProjectPopover.querySelector('[data-agy-effort-slider="1"]'), null, 'Still must NOT mount inside New Project popover');
+
+  wb.dispose();
+});
+
 test('Thought Translator supports expand vs preload trigger, immersive vs bilingual views, file pills, and lossless session title restore', async () => {
   const dom = createMockDom();
   const { document } = dom;
@@ -960,7 +1189,7 @@ test('Conversation Rail Hover Outline shows prompts/chapters/filter/collapse-ste
   wb.dispose();
 });
 
-test('Quick Context Menu respects Shift+Right-Click & file:// exclusion, delegates /side, guards unsent draft, highlights bare links, and opens Omni Viewer modes', async () => {
+test('Quick Context Menu respects Shift+Right-Click & file:// exclusion, triggers native /btw, guards unsent draft, highlights bare links, and opens Omni Viewer modes', async () => {
   const dom = createMockDom();
   const { document, highlightsMap, openedUrls } = dom;
 
@@ -988,7 +1217,6 @@ test('Quick Context Menu respects Shift+Right-Click & file:// exclusion, delegat
   convView.appendChild(composerCard);
   document.body.appendChild(convView);
 
-  const sideChatCalls = [];
   const notifications = [];
   const rpcCalls = [];
   let composerDraft = '';
@@ -1000,7 +1228,6 @@ test('Quick Context Menu respects Shift+Right-Click & file:// exclusion, delegat
       getComposerText: () => composerDraft,
       setComposerText: (_card, val) => { composerDraft = val; return true; }
     },
-    triggerSideChat: (card, cid, q) => { sideChatCalls.push({ card, cid, q }); return true; },
     notify: n => notifications.push(n),
     request: async (method, payload) => {
       rpcCalls.push({ method, payload });
@@ -1066,11 +1293,10 @@ test('Quick Context Menu respects Shift+Right-Click & file:// exclusion, delegat
     assert.ok(qmenu.querySelector(`[data-testid="${tid}"]`), `Missing quick menu item ${tid}`);
   }
 
-  // Click /side -> calls env.triggerSideChat directly
+  // Click /btw -> writes native /btw command into composer draft
   qmenu.querySelector('[data-testid="agy-qmenu-side"]').click();
-  assert.equal(sideChatCalls.length, 1);
-  assert.equal(sideChatCalls[0].cid, 'conv-42');
-  assert.equal(sideChatCalls[0].q, 'explain this architecture');
+  assert.equal(composerDraft, '/btw explain this architecture');
+  composerDraft = '';
 
   // Draft-busy guard: composer has unsent draft -> /plan does NOT overwrite and triggers env.notify
   composerDraft = 'unsent important draft';
