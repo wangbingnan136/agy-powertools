@@ -33,6 +33,29 @@ function page(ready = false) {
   return { context, document, nodes, callbacks, node };
 }
 
+test('SSH command paste observes setting changes without reinstalling its listener', async () => {
+  const p = page(true);
+  const settings = { enabled: true, sshCommandPaste: true };
+  p.context.__agyInitialSettings = settings;
+  let change, enabled, installs = 0;
+  p.context.__agyPanels = env => { change = env.change; };
+  p.context.installSshCommandPaste = (_document, options) => { enabled = options.enabled; installs++; };
+  p.context.__agyPowertoolsHost = raw => {
+    const { id, method, settings: patch } = JSON.parse(raw);
+    if (method === 'settings.set') Object.assign(settings, patch);
+    queueMicrotask(() => p.context.__agyPowertoolsReceive?.(id, { ...settings }));
+  };
+  vm.runInContext(source, p.context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(enabled(), true);
+  await change({ sshCommandPaste: false });
+  assert.equal(enabled(), false);
+  await change({ sshCommandPaste: true });
+  assert.equal(enabled(), true);
+  assert.equal(installs, 1);
+  p.context.__agyPowertools.dispose();
+});
+
 test('new-document injection waits for head and body and initializes exactly once', () => {
   const p = page();
   vm.runInContext(source, p.context);
@@ -655,7 +678,8 @@ test('sidebar bell switches to most recent running session, toggles Priority vie
     conversationDirectory: () => ({
       running: [
         { id: 'run-latest', title: 'Train A100 model', projectId: 'p-ml', projectName: 'FlowIE', running: true, updatedAtMs: 2000 },
-        { id: 'run-older', title: 'Check logs', projectId: 'p-ops', projectName: 'ops', running: true, updatedAtMs: 1000 }
+        { id: 'run-older', title: 'Check logs', projectId: 'p-ops', projectName: 'ops', running: true, updatedAtMs: 1000 },
+        ...Array.from({ length: 10 }, (_, i) => ({ id: `run-extra-${i}`, running: true, updatedAtMs: 100 - i }))
       ],
       unread: [],
       projects: [],
@@ -670,6 +694,8 @@ test('sidebar bell switches to most recent running session, toggles Priority vie
     const req = JSON.parse(raw);
     if (req.method === 'settings.get') {
       queueMicrotask(() => p.context.__agyPowertoolsReceive(req.id, { enabled: true, sidebarFocusBell: true, sessionSearch: true, sessionSearchShortcut: true }));
+    } else if (req.method === 'settings.set') {
+      queueMicrotask(() => p.context.__agyPowertoolsReceive(req.id, req.settings));
     }
   };
 
@@ -722,6 +748,34 @@ test('sidebar bell switches to most recent running session, toggles Priority vie
   await new Promise(r => setTimeout(r, 10));
   assert.equal(navigated[0].params.cascadeId, 'run-latest');
   assert.ok(renderedTrees.has('sidebar-focus'));
+
+  // Priority actions render real SVG, and promoted rows are hidden only in the native list.
+  const focusTree = renderedTrees.get('sidebar-focus');
+  const renderFocus = () => focusTree.type(focusTree.props);
+  const [dedupStyle, focusHeader, focusList] = renderFocus().children;
+  assert.match(dedupStyle.children[0], /\/c\/run-latest/);
+  assert.equal(focusList.props['data-testid'], 'agy-priority-list');
+  assert.equal(focusList.props.tabIndex, 0);
+  const rows = focusList.children[0];
+  assert.equal(rows.length, 12);
+  assert.equal(rows.at(-1).props['data-conversation-id'], 'run-extra-9');
+  const css = p.nodes.find(n => Object.hasOwn(n.dataset, 'agyDensityStyle')).textContent;
+  assert.match(css, /\.agy-priority-list\{[^}]*max-block-size:min\(calc\(var\(--agy-priority-visible-rows,4\) \* var\(--agy-priority-row-height\)\),36vh\);overflow-y:auto/);
+  assert.equal(focusList.props.style['--agy-priority-visible-rows'], 4);
+  for (const count of [3, 5]) {
+    await capturedEnv.change({ priorityVisibleRows: count });
+    const list = renderFocus().children[2];
+    assert.equal(list.props.style['--agy-priority-visible-rows'], count);
+    assert.equal(list.children[0].length, 12);
+  }
+  const sliders = focusHeader.children[1];
+  const icon = sliders.children[0];
+  assert.equal(icon.type(icon.props).type, 'svg');
+  sliders.props.onClick({ preventDefault() {}, stopPropagation() {} });
+  const menu = renderFocus().children[1].children[2];
+  assert.equal(menu.children[0].props['data-testid'], 'agy-sidebar-next-running-btn');
+  assert.equal(menu.children[1].props['data-testid'], 'agy-priority-clear-read');
+  assert.equal(menu.children[1].props.disabled, true);
 
   // Cmd+Opt+F triggers Session Search unless inside .xterm terminal
   const keyHandlers = p.callbacks.get('keydown') || [];
@@ -834,6 +888,74 @@ test('side chat slash command matches /侧 only (not backslash), defers to nativ
   assert.equal(openedArgs?.cid, 'conv-side-1');
   assert.equal(openedArgs?.question, '帮我看下日志');
   assert.equal(openedArgs?.submit, true);
+
+  pt.dispose();
+});
+
+test('Priority view retains finished and read chats like Codex, sorts waiting/unread/active/idle, ages out after TTL, and clears read chats on demand', () => {
+  const p = page(true);
+  p.context.ReactDOM = { createRoot: () => ({ render() {}, unmount() {} }) };
+  p.context.document.hasFocus = () => true;
+  p.context.location.pathname = '/c/chat-focused';
+  const records = {
+    'chat-focused': { id: 'chat-focused', title: 'Focused task', projectName: 'proj1', running: true, unread: false, updatedAtMs: 1000 },
+    'chat-bg': { id: 'chat-bg', title: 'Background task', projectName: 'proj2', running: true, unread: false, updatedAtMs: 2000 },
+    'ordinary': { id: 'ordinary', title: 'Recently updated ordinary chat', running: false, unread: false, updatedAtMs: 1_699_999_999_999 }
+  };
+  p.context.__agyNativeAdapter = {
+    wrap: el => el,
+    installPage: () => true,
+    onEditChange: () => () => {},
+    onGoalDetected: () => () => {},
+    setSideChatCommand() {},
+    executionState: id => id === 'chat-bg' && records['chat-bg'].waiting ? { live: { waiting: true } } : null,
+    conversationDirectory: () => ({
+      running: Object.values(records).filter(r => r.running),
+      unread: Object.values(records).filter(r => r.unread),
+      byId: { ...records },
+      projects: [],
+      subagentIds: []
+    })
+  };
+  p.context.__agyInitialSettings = { enabled: true, sidebarFocusBell: true };
+  vm.runInContext(source, p.context);
+  const pt = p.context.__agyPowertools;
+  const t0 = 1_700_000_000_000;
+
+  // 1. Both running; chat-bg waiting on approval ranks above active
+  records['chat-bg'].waiting = true;
+  let snap = pt.syncPriorityItems({ now: t0, activeId: 'chat-focused', focused: true });
+  assert.deepEqual(Array.from(snap.items, i => `${i.id}:${i.attentionState}`), ['chat-bg:waiting', 'chat-focused:active']);
+
+  // 2. Both finish: focused chat becomes `idle` (retained!), background chat becomes `unread` (ranks above idle!)
+  records['chat-bg'].waiting = false;
+  records['chat-bg'].running = false;
+  records['chat-focused'].running = false;
+  snap = pt.syncPriorityItems({ now: t0 + 5000, activeId: 'chat-focused', focused: true });
+  assert.deepEqual(Array.from(snap.items, i => `${i.id}:${i.attentionState}`), ['chat-bg:unread', 'chat-focused:idle']);
+
+  // 3. Clicking chat-bg to read it transitions unread -> idle WITHOUT disappearing from Priority
+  p.context.location.pathname = '/c/chat-bg';
+  snap = pt.syncPriorityItems({ now: t0 + 10_000, activeId: 'chat-bg', focused: true });
+  assert.deepEqual(Array.from(snap.items, i => i.attentionState), ['idle', 'idle']);
+  assert.equal(snap.items.length, 2);
+
+  // 4. After 15m TTL, chat-focused (finished at t0+5s) ages out while chat-bg (read at t0+10s) still has 3s left
+  snap = pt.syncPriorityItems({ now: t0 + 5000 + 15 * 60 * 1000 + 2000, activeId: 'other', focused: true });
+  assert.deepEqual(Array.from(snap.items, i => i.id), ['chat-bg']);
+
+  // 5. "Clear read chats" sweeps remaining idle items immediately
+  pt.clearReadPriorityChats(t0 + 5000 + 15 * 60 * 1000 + 3000);
+  snap = pt.syncPriorityItems({ now: t0 + 5000 + 15 * 60 * 1000 + 3000, activeId: 'other', focused: true });
+  assert.equal(snap.items.length, 0);
+
+  // Clearing a read chat only suppresses the old update, not its next run.
+  records['chat-bg'].running = true;
+  snap = pt.syncPriorityItems({ now: t0 + 5000 + 15 * 60 * 1000 + 4000, activeId: 'other' });
+  assert.deepEqual(Array.from(snap.items, i => i.id), ['chat-bg']);
+  records['chat-bg'].archived = true;
+  snap = pt.syncPriorityItems({ now: t0 + 5000 + 15 * 60 * 1000 + 5000, activeId: 'other' });
+  assert.equal(snap.items.length, 0);
 
   pt.dispose();
 });
